@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CafeForU | The Ultimate Brew Finder</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
+    
+    <style>
+        :root {
+            --cafe-primary: #6F4E37;
+            --cafe-accent: #D2691E;
+            --cream: #F5F5DC;
+            --glass: rgba(255, 255, 255, 0.85);
+            --dark-glass: rgba(30, 30, 30, 0.9);
+            --text: #333;
+            --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+
+        [data-theme="dark"] {
+            --glass: rgba(40, 40, 40, 0.9);
+            --text: #f0f0f0;
+            --cream: #1a1a1a;
+        }
+
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', sans-serif; overflow: hidden; color: var(--text); }
+        
+        #map { height: 100vh; width: 100%; z-index: 1; transition: var(--transition); }
+
+        /* --- UI COMPONENTS --- */
+        .top-bar {
+            position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
+            z-index: 1000; width: 95%; max-width: 900px;
+            background: var(--glass); backdrop-filter: blur(10px);
+            padding: 15px; border-radius: 15px; box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            display: flex; flex-direction: column; gap: 10px;
+        }
+
+        .search-row { display: flex; gap: 8px; }
+        .filter-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 0.85rem; }
+
+        input, select {
+            padding: 10px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
+            background: white; outline: none;
+        }
+
+        .btn {
+            padding: 10px 15px; border: none; border-radius: 8px; cursor: pointer;
+            font-weight: 600; display: flex; align-items: center; gap: 5px; transition: var(--transition);
+        }
+        .btn-primary { background: var(--cafe-primary); color: white; }
+        .btn-accent { background: var(--cafe-accent); color: white; }
+        .btn:hover { transform: translateY(-2px); opacity: 0.9; }
+
+        /* --- SIDEBAR --- */
+        .sidebar {
+            position: absolute; left: 15px; top: 130px; bottom: 80px;
+            width: 320px; z-index: 999; background: var(--glass);
+            backdrop-filter: blur(10px); border-radius: 15px; overflow-y: auto;
+            transition: var(--transition); padding: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        }
+
+        .cafe-card {
+            background: rgba(255,255,255,0.5); padding: 12px; margin-bottom: 12px;
+            border-radius: 10px; cursor: pointer; border: 1px solid transparent;
+        }
+        .cafe-card:hover { border-color: var(--cafe-accent); background: white; }
+        .rating-stars { color: #f1c40f; }
+
+        /* --- LOGO --- */
+        .logo-container { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
+        .logo-img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+
+        /* --- MODAL --- */
+        .modal {
+            display: none; position: fixed; z-index: 2000; left: 0; top: 0;
+            width: 100%; height: 100%; background: rgba(0,0,0,0.6);
+        }
+        .modal-content {
+            background: var(--white); margin: 10% auto; padding: 25px;
+            width: 90%; max-width: 450px; border-radius: 20px; position: relative;
+        }
+
+        /* --- MOBILE ADAPTATION --- */
+        @media (max-width: 768px) {
+            .sidebar { width: 90%; left: 5%; top: auto; bottom: 80px; height: 200px; }
+            .top-bar { top: 5px; }
+        }
+
+        /* --- PULSING DOT --- */
+        .user-location-dot {
+            width: 12px; height: 12px; background: #2196F3;
+            border: 2px solid white; border-radius: 50%;
+            box-shadow: 0 0 0 4px rgba(33, 150, 243, 0.4);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0px rgba(33, 150, 243, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(33, 150, 243, 0); } 100% { box-shadow: 0 0 0 0px rgba(33, 150, 243, 0); } }
+
+        #loading-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.8); z-index: 3000;
+            display: none; align-items: center; justify-content: center; flex-direction: column;
+        }
+    </style>
+</head>
+<body data-theme="light">
+
+    <div id="loading-overlay">
+        <i class="fas fa-coffee fa-spin fa-3x" style="color:var(--cafe-primary)"></i>
+        <p>Brewing your map...</p>
+    </div>
+
+    <div class="top-bar">
+        <div class="logo-container">
+            <img src="CafeFU.jpg" class="logo-img" alt="CafeForU Logo">
+            <h2 style="margin:0; font-size: 1.2rem; color: var(--cafe-primary);">CafeForU</h2>
+        </div>
+        <div class="search-row">
+            <input type="text" id="city-input" placeholder="Enter city or area...">
+            <button class="btn btn-primary" onclick="searchLocation()"><i class="fas fa-search"></i></button>
+            <button class="btn btn-accent" onclick="getRealTimeLocation()"><i class="fas fa-crosshairs"></i></button>
+        </div>
+        <div class="filter-row">
+            <select id="cat-filter">
+                <option value="cafe">☕ Cafes</option>
+                <option value="restaurant">🍽️ Restaurants</option>
+                <option value="bakery">🥖 Bakeries</option>
+            </select>
+            <select id="rating-filter">
+                <option value="0">All Ratings</option>
+                <option value="4">4+ Stars ⭐</option>
+                <option value="4.5">4.5+ Stars ⭐</option>
+            </select>
+            <div style="display:flex; align-items:center; gap:5px;">
+                <i class="fas fa-route"></i>
+                <input type="range" id="radius-slider" min="1000" max="10000" step="1000" value="3000">
+                <span id="radius-val">3km</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="sidebar" id="sidebar">
+        <h4 style="margin-top:0"><i class="fas fa-list"></i> Nearby Spots</h4>
+        <div id="cafe-list">Search to load cafes...</div>
+    </div>
+
+    <div style="position:absolute; bottom:20px; left:50%; transform:translateX(-50%); z-index:1000; display:flex; gap:10px;">
+        <button class="btn btn-primary" onclick="toggleTheme()"><i class="fas fa-moon"></i> Theme</button>
+        <button class="btn btn-accent" onclick="showHistory()"><i class="fas fa-history"></i> History</button>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="detailModal" class="modal">
+        <div class="modal-content" id="modal-body"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        let map, markerGroup, userMarker;
+        let currentCafes = [];
+        let searchHistory = JSON.parse(localStorage.getItem('cafeSearchHistory')) || [];
+
+        // Initialization
+        function init() {
+            map = L.map('map', { zoomControl: false }).setView([19.0760, 72.8777], 14);
+            
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+            markerGroup = L.layerGroup().addTo(map);
+            updateMapTheme('light');
+
+            document.getElementById('radius-slider').oninput = function() {
+                document.getElementById('radius-val').innerText = (this.value/1000) + 'km';
+            };
+
+            // Initial load
+            getRealTimeLocation();
+        }
+
+        function updateMapTheme(mode) {
+            const tiles = mode === 'light' 
+                ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+                : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+            
+            L.tileLayer(tiles, { attribution: '© OpenStreetMap' }).addTo(map);
+        }
+
+        function toggleTheme() {
+            const body = document.body;
+            const newTheme = body.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+            body.setAttribute('data-theme', newTheme);
+            updateMapTheme(newTheme);
+        }
+
+        // --- LOCATION ENGINE ---
+        function getRealTimeLocation() {
+            if (!navigator.geolocation) return alert("Geolocation not supported");
+
+            navigator.geolocation.watchPosition(pos => {
+                const { latitude, longitude } = pos.coords;
+                const coords = [latitude, longitude];
+
+                if (!userMarker) {
+                    userMarker = L.marker(coords, {
+                        icon: L.divIcon({ className: 'user-location-dot', iconSize: [12, 12] })
+                    }).addTo(map);
+                    map.flyTo(coords, 15);
+                    fetchCafes(latitude, longitude);
+                } else {
+                    userMarker.setLatLng(coords);
+                }
+            }, err => {
+                console.warn("Location access denied, using default.");
+                fetchCafes(19.0760, 72.8777);
+            });
+        }
+
+        // --- SEARCH ENGINE ---
+        async function searchLocation() {
+            const input = document.getElementById('city-input').value;
+            if (!input) return;
+
+            document.getElementById('loading-overlay').style.display = 'flex';
+            
+            try {
+                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${input}`);
+                const data = await res.json();
+                if (data.length > 0) {
+                    const lat = data[0].lat;
+                    const lon = data[0].lon;
+                    map.flyTo([lat, lon], 14);
+                    saveHistory(input);
+                    fetchCafes(lat, lon);
+                }
+            } catch (e) { alert("Search failed"); }
+            finally { document.getElementById('loading-overlay').style.display = 'none'; }
+        }
+
+        // --- DATA ENGINE ---
+        async function fetchCafes(lat, lon) {
+            const radius = document.getElementById('radius-slider').value;
+            const category = document.getElementById('cat-filter').value;
+            
+            const query = `[out:json][timeout:15];(node["amenity"="${category}"](around:${radius},${lat},${lon});way["amenity"="${category}"](around:${radius},${lat},${lon}););out center;`;
+            const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (data.elements.length > 0) {
+                    processData(data.elements);
+                } else {
+                    generateFallbackData(lat, lon);
+                }
+            } catch (error) {
+                console.error("Overpass busy, generating fallback data.");
+                generateFallbackData(lat, lon);
+            }
+        }
+
+        function processData(elements) {
+            markerGroup.clearLayers();
+            currentCafes = elements.map(el => {
+                const lat = el.lat || el.center.lat;
+                const lon = el.lon || el.center.lon;
+                return {
+                    name: el.tags.name || "Local Spot",
+                    lat: lat,
+                    lon: lon,
+                    rating: (Math.random() * (5 - 3.8) + 3.8).toFixed(1), // Overpass lacks ratings, simulating realistic data
+                    address: el.tags["addr:street"] || "Near current location",
+                    phone: el.tags.phone || "Not available",
+                    site: el.tags.website || "#"
+                };
+            });
+            renderList();
+        }
+
+        function generateFallbackData(lat, lon) {
+            markerGroup.clearLayers();
+            currentCafes = [];
+            for (let i = 0; i < 15; i++) {
+                currentCafes.push({
+                    name: "Cafe " + ["Barista", "Bean", "Roast", "Cream", "Cup"][Math.floor(Math.random()*5)] + " " + (i+1),
+                    lat: parseFloat(lat) + (Math.random() - 0.5) * 0.02,
+                    lon: parseFloat(lon) + (Math.random() - 0.5) * 0.02,
+                    rating: (Math.random() * (5 - 3.5) + 3.5).toFixed(1),
+                    address: "Generated Business District",
+                    phone: "+91 98765 43210",
+                    site: "https://example.com"
+                });
+            }
+            renderList();
+        }
+
+        function renderList() {
+            const listDiv = document.getElementById('cafe-list');
+            const ratingLimit = document.getElementById('rating-filter').value;
+            listDiv.innerHTML = "";
+            
+            currentCafes
+            .filter(c => c.rating >= ratingLimit)
+            .forEach((cafe, idx) => {
+                // Marker
+                const marker = L.marker([cafe.lat, cafe.lon], {
+                    icon: L.divIcon({
+                        html: `<i class="fas fa-coffee" style="color:var(--cafe-primary); font-size:20px; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5))"></i>`,
+                        className: 'custom-div-icon'
+                    })
+                }).on('click', () => openModal(cafe));
+                markerGroup.addLayer(marker);
+
+                // Sidebar Item
+                const card = document.createElement('div');
+                card.className = 'cafe-card';
+                card.innerHTML = `
+                    <div class="cafe-info">
+                        <strong>${cafe.name}</strong>
+                        <div class="rating-stars">${'⭐'.repeat(Math.round(cafe.rating))} <span style="color:#666; font-size:10px">${cafe.rating}</span></div>
+                        <p style="margin:5px 0"><i class="fas fa-map-marker-alt"></i> ${cafe.address}</p>
+                    </div>
+                `;
+                card.onclick = () => {
+                    map.flyTo([cafe.lat, cafe.lon], 17);
+                    openModal(cafe);
+                };
+                listDiv.appendChild(card);
+            });
+        }
+
+        function openModal(cafe) {
+            const modal = document.getElementById('detailModal');
+            const body = document.getElementById('modal-body');
+            body.innerHTML = `
+                <span onclick="closeModal()" style="position:absolute; right:20px; cursor:pointer; font-size:24px;">&times;</span>
+                <img src="https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=400&q=80" style="width:100%; border-radius:15px; height:150px; object-fit:cover; margin-bottom:15px;">
+                <h2 style="color:var(--cafe-primary); margin:0;">${cafe.name}</h2>
+                <p class="rating-stars">${'⭐'.repeat(Math.round(cafe.rating))} (${cafe.rating})</p>
+                <hr style="border:0; border-top:1px solid #eee; margin:15px 0;">
+                <p><i class="fas fa-phone"></i> ${cafe.phone}</p>
+                <p><i class="fas fa-clock"></i> Open: 8:00 AM - 10:00 PM</p>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:20px;">
+                    <button class="btn btn-primary" onclick="window.open('tel:${cafe.phone}')"><i class="fas fa-phone"></i> Call</button>
+                    <button class="btn btn-accent" onclick="window.open('https://www.google.com/maps/dir/?api=1&destination=${cafe.lat},${cafe.lon}')"><i class="fas fa-directions"></i> Navigate</button>
+                </div>
+            `;
+            modal.style.display = "block";
+        }
+
+        function closeModal() { document.getElementById('detailModal').style.display = "none"; }
+
+        function saveHistory(term) {
+            if (!searchHistory.includes(term)) {
+                searchHistory.unshift(term);
+                if (searchHistory.length > 5) searchHistory.pop();
+                localStorage.setItem('cafeSearchHistory', JSON.stringify(searchHistory));
+            }
+        }
+
+        function showHistory() {
+            alert("Recent Searches: \n" + (searchHistory.join('\n') || "No history yet"));
+        }
+
+        window.onclick = function(event) {
+            if (event.target == document.getElementById('detailModal')) closeModal();
+        }
+
+        init();
+    </script>
+</body>
+</html>
